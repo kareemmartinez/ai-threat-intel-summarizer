@@ -57,7 +57,7 @@ Built by **Kareem Martinez | Seraph LLC**
 
 ## Quick Start
 ```bash
-git clone https://github.com/YOUR_USERNAME/ai-threat-intel-summarizer.git
+git clone https://github.com/kareemmartinez/ai-threat-intel-summarizer.git
 cd ai-threat-intel-summarizer
 
 # Rule-based mode (no API key needed)

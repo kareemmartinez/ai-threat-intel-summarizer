@@ -34,18 +34,18 @@ MODEL             = "claude-3-haiku-20240307"
 def fetch_cves(keyword="ransomware", max_results=5):
     print(f"[+] Fetching CVEs for keyword: '{keyword}'...")
     base_url = "https://services.nvd.nist.gov/rest/json/cves/2.0"
-    params   = {
+    query_params   = {
         "keywordSearch":  keyword,
         "resultsPerPage": max_results,
     }
-    url = base_url + "?" + urllib.parse.urlencode(params)
+    request_url = base_url + "?" + urllib.parse.urlencode(query_params)
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "ThreatIntelSummarizer/1.0"})
-        with urllib.request.urlopen(req, timeout=15) as response:
-            data = json.loads(response.read().decode("utf-8"))
-        cves = data.get("vulnerabilities", [])
-        print(f"[+] Retrieved {len(cves)} CVEs.")
-        return cves
+        http_request = urllib.request.Request(request_url, headers={"User-Agent": "ThreatIntelSummarizer/1.0"})
+        with urllib.request.urlopen(http_request, timeout=15) as response:
+            nvd_response_data = json.loads(response.read().decode("utf-8"))
+        vulnerability_entries = nvd_response_data.get("vulnerabilities", [])
+        print(f"[+] Retrieved {len(vulnerability_entries)} CVEs.")
+        return vulnerability_entries
     except Exception as e:
         print(f"[!] NVD API failed: {e}. Using mock data.")
         return get_mock_cves()
@@ -82,42 +82,42 @@ def get_mock_cves():
 # ─────────────────────────────────────────────
 
 def parse_cves(raw_cves):
-    parsed = []
-    for item in raw_cves:
-        cve         = item.get("cve", {})
-        cve_id      = cve.get("id", "Unknown")
-        published   = cve.get("published", "")[:10]
-        descriptions = cve.get("descriptions", [])
+    parsed_vulnerabilities = []
+    for vulnerability_entry in raw_cves:
+        cve_data     = vulnerability_entry.get("cve", {})
+        cve_id       = cve_data.get("id", "Unknown")
+        published    = cve_data.get("published", "")[:10]
+        descriptions = cve_data.get("descriptions", [])
         description  = next(
             (d["value"] for d in descriptions if d.get("lang") == "en"),
             "No description available"
         )
-        score    = "N/A"
-        severity = "UNKNOWN"
-        vector   = "UNKNOWN"
-        metrics  = cve.get("metrics", {})
-        if "cvssMetricV31" in metrics:
-            cvss     = metrics["cvssMetricV31"][0]["cvssData"]
-            score    = cvss.get("baseScore", "N/A")
-            severity = cvss.get("baseSeverity", "UNKNOWN")
-            vector   = cvss.get("attackVector", "UNKNOWN")
-        weaknesses = cve.get("weaknesses", [])
+        cvss_base_score = "N/A"
+        cvss_severity   = "UNKNOWN"
+        attack_vector   = "UNKNOWN"
+        cvss_metrics    = cve_data.get("metrics", {})
+        if "cvssMetricV31" in cvss_metrics:
+            cvss_v31_data   = cvss_metrics["cvssMetricV31"][0]["cvssData"]
+            cvss_base_score = cvss_v31_data.get("baseScore", "N/A")
+            cvss_severity   = cvss_v31_data.get("baseSeverity", "UNKNOWN")
+            attack_vector   = cvss_v31_data.get("attackVector", "UNKNOWN")
+        weaknesses = cve_data.get("weaknesses", [])
         cwe = "Unknown"
         if weaknesses:
-            cwe_list = weaknesses[0].get("description", [])
-            if cwe_list:
-                cwe = cwe_list[0].get("value", "Unknown")
-        parsed.append({
+            cwe_descriptions = weaknesses[0].get("description", [])
+            if cwe_descriptions:
+                cwe = cwe_descriptions[0].get("value", "Unknown")
+        parsed_vulnerabilities.append({
             "cve_id":      cve_id,
             "published":   published,
-            "severity":    severity,
-            "score":       score,
-            "vector":      vector,
+            "severity":    cvss_severity,
+            "score":       cvss_base_score,
+            "vector":      attack_vector,
             "cwe":         cwe,
             "description": description,
         })
-    parsed.sort(key=lambda x: float(x["score"]) if x["score"] != "N/A" else 0, reverse=True)
-    return parsed
+    parsed_vulnerabilities.sort(key=lambda x: float(x["score"]) if x["score"] != "N/A" else 0, reverse=True)
+    return parsed_vulnerabilities
 
 
 # ─────────────────────────────────────────────
@@ -131,7 +131,7 @@ def analyze_with_ai(cve):
 
     print(f"  [AI] Analyzing {cve['cve_id']} with Claude...")
 
-    prompt = f"""You are a senior cybersecurity analyst. Analyze this CVE and provide a structured threat intelligence report.
+    analysis_prompt = f"""You are a senior cybersecurity analyst. Analyze this CVE and provide a structured threat intelligence report.
 
 CVE ID:        {cve['cve_id']}
 Severity:      {cve['severity']} (CVSS {cve['score']})
@@ -161,47 +161,47 @@ NIST 800-53 CONTROLS:
 
 ANALYST CONFIDENCE: [HIGH/MEDIUM/LOW]"""
 
-    payload = {
+    api_request_payload = {
         "model":      MODEL,
         "max_tokens": 600,
-        "messages":   [{"role": "user", "content": prompt}]
+        "messages":   [{"role": "user", "content": analysis_prompt}]
     }
-    headers = {
+    api_request_headers = {
         "Content-Type":      "application/json",
         "x-api-key":         ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
     }
     try:
-        data = json.dumps(payload).encode("utf-8")
-        req  = urllib.request.Request(ANTHROPIC_API_URL, data=data, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=30) as response:
-            result  = json.loads(response.read().decode("utf-8"))
-            content = result.get("content", [{}])[0].get("text", "")
-            return content
+        encoded_payload = json.dumps(api_request_payload).encode("utf-8")
+        api_request     = urllib.request.Request(ANTHROPIC_API_URL, data=encoded_payload, headers=api_request_headers, method="POST")
+        with urllib.request.urlopen(api_request, timeout=30) as response:
+            api_response_data = json.loads(response.read().decode("utf-8"))
+            analysis_text     = api_response_data.get("content", [{}])[0].get("text", "")
+            return analysis_text
     except Exception as e:
         print(f"  [!] AI API call failed: {e}. Using rule-based analysis.")
         return rule_based_analysis(cve)
 
 
 def rule_based_analysis(cve):
-    severity = cve["severity"]
-    vector   = cve["vector"]
-    score    = cve["score"]
+    cvss_severity = cve["severity"]
+    attack_vector = cve["vector"]
+    cvss_score    = cve["score"]
 
-    if severity == "CRITICAL":
-        urgency  = "immediate emergency patching"
-        timeline = "within 24 hours"
-    elif severity == "HIGH":
-        urgency  = "priority patching"
-        timeline = "within 7 days"
+    if cvss_severity == "CRITICAL":
+        patch_urgency  = "immediate emergency patching"
+        patch_timeline = "within 24 hours"
+    elif cvss_severity == "HIGH":
+        patch_urgency  = "priority patching"
+        patch_timeline = "within 7 days"
     else:
-        urgency  = "scheduled patching"
-        timeline = "within 30 days"
+        patch_urgency  = "scheduled patching"
+        patch_timeline = "within 30 days"
 
-    network_note = "remotely exploitable without authentication — highest priority" if vector == "NETWORK" else "requires local access to exploit"
+    attack_vector_description = "remotely exploitable without authentication — highest priority" if attack_vector == "NETWORK" else "requires local access to exploit"
 
     return f"""THREAT SUMMARY:
-This {severity} severity vulnerability (CVSS {score}) represents a significant security risk. The flaw is {network_note}. Organizations running affected software should treat this as requiring {urgency}.
+This {cvss_severity} severity vulnerability (CVSS {cvss_score}) represents a significant security risk. The flaw is {attack_vector_description}. Organizations running affected software should treat this as requiring {patch_urgency}.
 
 ATTACK SCENARIO:
 An attacker could leverage this vulnerability to compromise affected systems. The network-accessible attack surface increases exposure significantly for internet-facing assets.
@@ -211,7 +211,7 @@ Any organization running the affected software version. Cloud environments, ente
 
 IMMEDIATE ACTIONS:
 1. Identify all systems running affected software versions immediately
-2. Apply vendor patches or implement compensating controls {timeline}
+2. Apply vendor patches or implement compensating controls {patch_timeline}
 3. Monitor security logs for exploitation indicators and anomalous activity
 
 NIST 800-53 CONTROLS:
@@ -226,10 +226,10 @@ ANALYST CONFIDENCE: MEDIUM"""
 
 def generate_report(cves_with_analysis, keyword, output_dir="sample_output"):
     os.makedirs(output_dir, exist_ok=True)
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    json_file = os.path.join(output_dir, f"threat_intel_{timestamp}.json")
-    report = {
+    json_report_path = os.path.join(output_dir, f"threat_intel_{report_timestamp}.json")
+    report_data = {
         "metadata": {
             "generated_at": datetime.datetime.now().isoformat(),
             "keyword":      keyword,
@@ -240,27 +240,27 @@ def generate_report(cves_with_analysis, keyword, output_dir="sample_output"):
         },
         "findings": cves_with_analysis,
     }
-    with open(json_file, "w") as f:
-        json.dump(report, f, indent=4)
-    print(f"\n[+] JSON report saved: {json_file}")
+    with open(json_report_path, "w") as f:
+        json.dump(report_data, f, indent=4)
+    print(f"\n[+] JSON report saved: {json_report_path}")
 
-    txt_file = os.path.join(output_dir, f"threat_intel_{timestamp}.txt")
-    with open(txt_file, "w") as f:
+    text_report_path = os.path.join(output_dir, f"threat_intel_{report_timestamp}.txt")
+    with open(text_report_path, "w") as f:
         f.write("=" * 70 + "\n")
         f.write("  AI THREAT INTELLIGENCE REPORT\n")
         f.write(f"  Seraph LLC | Generated: {datetime.datetime.now().strftime('%B %d, %Y %H:%M UTC')}\n")
         f.write(f"  Keyword: {keyword} | CVEs Analyzed: {len(cves_with_analysis)}\n")
         f.write("=" * 70 + "\n\n")
-        for item in cves_with_analysis:
-            cve = item["cve"]
+        for cve_finding in cves_with_analysis:
+            cve_data = cve_finding["cve"]
             f.write(f"{'─' * 70}\n")
-            f.write(f"  {cve['cve_id']}  |  {cve['severity']}  |  CVSS {cve['score']}\n")
-            f.write(f"  Published: {cve['published']}  |  Vector: {cve['vector']}\n")
+            f.write(f"  {cve_data['cve_id']}  |  {cve_data['severity']}  |  CVSS {cve_data['score']}\n")
+            f.write(f"  Published: {cve_data['published']}  |  Vector: {cve_data['vector']}\n")
             f.write(f"{'─' * 70}\n\n")
-            f.write(item["analysis"] + "\n\n")
+            f.write(cve_finding["analysis"] + "\n\n")
 
-    print(f"[+] Text report saved: {txt_file}")
-    return json_file, txt_file
+    print(f"[+] Text report saved: {text_report_path}")
+    return json_report_path, text_report_path
 
 
 def print_console_report(cves_with_analysis, keyword):
@@ -268,13 +268,13 @@ def print_console_report(cves_with_analysis, keyword):
     print("  AI THREAT INTELLIGENCE SUMMARY")
     print(f"  Keyword: {keyword} | Analyzed: {len(cves_with_analysis)} CVEs")
     print("=" * 70)
-    for item in cves_with_analysis:
-        cve = item["cve"]
-        print(f"\n  [{cve['severity']:8}] {cve['cve_id']}  —  CVSS {cve['score']}")
-        print(f"  Published: {cve['published']}  |  Vector: {cve['vector']}")
+    for cve_finding in cves_with_analysis:
+        cve_data = cve_finding["cve"]
+        print(f"\n  [{cve_data['severity']:8}] {cve_data['cve_id']}  —  CVSS {cve_data['score']}")
+        print(f"  Published: {cve_data['published']}  |  Vector: {cve_data['vector']}")
         print(f"  {'-' * 60}")
-        lines = [l for l in item["analysis"].split("\n") if l.strip()]
-        for line in lines[:4]:
+        analysis_lines = [line for line in cve_finding["analysis"].split("\n") if line.strip()]
+        for line in analysis_lines[:4]:
             print(f"  {line}")
         print()
     print("=" * 70 + "\n")
@@ -304,18 +304,18 @@ if __name__ == "__main__":
     else:
         print(f"\n  [+] AI Mode: Active (Model: {MODEL})")
 
-    raw_cves    = fetch_cves(keyword=args.keyword, max_results=args.results)
-    parsed_cves = parse_cves(raw_cves)
+    raw_cve_entries    = fetch_cves(keyword=args.keyword, max_results=args.results)
+    parsed_cve_entries = parse_cves(raw_cve_entries)
 
-    print(f"\n[+] Analyzing {len(parsed_cves)} CVEs...\n")
-    results = []
-    for cve in parsed_cves:
-        analysis = analyze_with_ai(cve)
-        results.append({"cve": cve, "analysis": analysis})
+    print(f"\n[+] Analyzing {len(parsed_cve_entries)} CVEs...\n")
+    cve_analysis_results = []
+    for cve in parsed_cve_entries:
+        cve_analysis = analyze_with_ai(cve)
+        cve_analysis_results.append({"cve": cve, "analysis": cve_analysis})
 
-    print_console_report(results, args.keyword)
+    print_console_report(cve_analysis_results, args.keyword)
 
     if not args.no_save:
-        generate_report(results, args.keyword)
+        generate_report(cve_analysis_results, args.keyword)
 
     print("[+] Threat intelligence analysis complete.\n")
